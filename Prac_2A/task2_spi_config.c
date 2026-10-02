@@ -30,11 +30,15 @@ void eeprom_spi_init(void)
     /* TODO 2.5  Chip select: make EE_PIN_CS a general purpose output driven
      *           HIGH. Think about the ORDER of those two steps. Be ready to
      *           explain why CS must start high. */
-	    uint32_t moder = GPIOB->MODER;
-	    moder &= ~(3UL << (12u * 2u));
-	    moder |=  (1UL << (12u * 2u));
-	    GPIOB->MODER = moder;
-	    GPIOB->BSRR  = (1UL << 12);     /* CS idle high */
+	GPIOB->BSRR = GPIO_BSRR_BS_12;                     /* RM0091 Section 8.4.7: Drive HIGH */
+
+	uint32_t moder = GPIOB->MODER;
+	moder &= ~(GPIO_MODER_MODER12);                   /* RM0091 Section 8.4.1: Clear bits 25:24 */
+	moder |= (1U << GPIO_MODER_MODER12_Pos);          /* Set mode to 01 (General purpose output) */
+	GPIOB->MODER = moder;
+	/*You drive Chip Select high before configuring the pin mode as an putput to prevent
+	 * glitching the line low during setup. The SPI EEPROM active-low Chip Select triggers
+	 * on a falling edge. Glitching low during power-up or initializatipn could cause the EEPROM
 
     /* TODO 2.6  SCK, MISO and MOSI: put them in alternate-function mode
      *           (MODER), and select the alternate function number EE_SPI_AF
