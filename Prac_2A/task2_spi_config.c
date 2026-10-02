@@ -24,80 +24,49 @@ void eeprom_spi_init(void)
     /* TODO 2.4  Enable the clocks this needs: the GPIO port that carries the
      *           pins AND the SPI peripheral itself. They are in different RCC
      *           enable registers - find both in RM0091. */
-
-	RCC->AHBENR  |= RCC_AHBENR_GPIOBEN;  /* RM0091 Section 6.4.6 */
-	RCC->APB1ENR |= RCC_APB1ENR_SPI2EN;  /* RM0091 Section 6.4.8 */
-
+	 RCC->AHBENR   |= (1UL << 18);   /* IOPBEN  */
+	 RCC->APB1ENR  |= (1UL << 14);   /* SPI2EN  */
 
     /* TODO 2.5  Chip select: make EE_PIN_CS a general purpose output driven
      *           HIGH. Think about the ORDER of those two steps. Be ready to
      *           explain why CS must start high. */
-
-	GPIOB->BSRR = GPIO_BSRR_BS_12;                     /* RM0091 Section 8.4.7: Drive HIGH */
-
-	uint32_t moder = GPIOB->MODER;
-	moder &= ~(GPIO_MODER_MODER12);                   /* RM0091 Section 8.4.1: Clear bits 25:24 */
-	moder |= (1U << GPIO_MODER_MODER12_Pos);          /* Set mode to 01 (General purpose output) */
-	GPIOB->MODER = moder;
-	/*You drive Chip Select high before configuring the pin mode as an putput to prevent
-	 * glitching the line low during setup. The SPI EEPROM active-low Chip Select triggers
-	 * on a falling edge. Glitching low during power-up or initializatipn could cause the EEPROM
-	 * to misinterpret noise as an incomplete command.*/
-
-
+	    uint32_t moder = GPIOB->MODER;
+	    moder &= ~(3UL << (12u * 2u));
+	    moder |=  (1UL << (12u * 2u));
+	    GPIOB->MODER = moder;
+	    GPIOB->BSRR  = (1UL << 12);     /* CS idle high */
 
     /* TODO 2.6  SCK, MISO and MOSI: put them in alternate-function mode
      *           (MODER), and select the alternate function number EE_SPI_AF
      *           (the AF register for pins 8..15). Both registers are needed. */
-
-	moder = GPIOB->MODER;
-	moder &= ~(GPIO_MODER_MODER13 | GPIO_MODER_MODER14 | GPIO_MODER_MODER15);
-	moder |= (2U << GPIO_MODER_MODER13_Pos) |
-	         (2U << GPIO_MODER_MODER14_Pos) |
-	         (2U << GPIO_MODER_MODER15_Pos);           /* Set to mode 10 (AF) */
-	GPIOB->MODER = moder;
-
-	/* Configure AFRH (AFR[1]) for PB13, PB14, PB15 to AF0 (0000) */
-	uint32_t afrh = GPIOB->AFR[1];
-	afrh &= ~((0xFU << GPIO_AFRH_AFSEL13_Pos) |
-	          (0xFU << GPIO_AFRH_AFSEL14_Pos) |
-	          (0xFU << GPIO_AFRH_AFSEL15_Pos));        /* RM0091 Section 8.4.10: AF0 */
-	GPIOB->AFR[1] = afrh;
+	    moder = GPIOB->MODER;
+	    moder &= ~(MODER2_MASK(13u) | MODER2_MASK(14u) | MODER2_MASK(15u));
+	    moder |=  MODER2(13u, 2u) | MODER2(14u, 2u) | MODER2(15u, 2u);
+	    GPIOB->MODER = moder;
+	    uint32_t afrh = GPIOB->AFR[1];
+	    afrh &= ~(AFRH4_MASK(13u) | AFRH4_MASK(14u) | AFRH4_MASK(15u));
+	    afrh |=  AFRH4(13u, EE_SPI_AF) | AFRH4(14u, EE_SPI_AF) | AFRH4(15u, EE_SPI_AF);
+	    GPIOB->AFR[1] = afrh;
 
     /* TODO 2.7  Recommended: high output speed on SCK and MOSI, and a pull-up
      *           on MISO. In your report, explain what the EEPROM does with its
      *           output pin while CS is high, and why a pull-up helps. */
+	    uint32_t ospeedr = GPIOB->OSPEEDR;
+	    ospeedr &= ~(MODER2_MASK(13u) | MODER2_MASK(15u));
+	    ospeedr |=  MODER2(13u, 3u) | MODER2(15u, 3u);
+	    GPIOB->OSPEEDR = ospeedr;
 
-	GPIOB->OSPEEDR |= (3U << GPIO_OSPEEDR_OSPEEDR13_Pos) |
-	                  (3U << GPIO_OSPEEDR_OSPEEDR15_Pos);  /* RM0091 Section 8.4.3 */
-
-	uint32_t pupdr = GPIOB->PUPDR;
-	pupdr &= ~(GPIO_PUPDR_PUPDR14);
-	pupdr |= (1U << GPIO_PUPDR_PUPDR14_Pos);               /* RM0091 Section 8.4.4: Pull-up (01) */
-	GPIOB->PUPDR = pupdr;
-
-	/*When Chip Select is high(inactive), the EEPROM's System Out (MISO) pin
-	 * is placed in a high-impedance (high-z) tri-state mode. Floating inputs
-	 * are prone to picking up electrical noise, which can cause spurious interrupts
-	 * or intermediate voltage levels that increase MCU power consumption.
-	 * An internal pull-up resistor holds the MISO line at a stable logic high state while idle.*/
+	    uint32_t pupdr = GPIOB->PUPDR;
+	    pupdr &= ~MODER2_MASK(14u);
+	    pupdr |=  MODER2(14u, 1u);
+	    GPIOB->PUPDR = pupdr;
 
     /* TODO 2.8  SPI_CR2: 8-bit data frames, and a receive FIFO threshold that
      *           reports a received byte after 8 bits. Read the RM0091
      *           description of the FIFO threshold carefully - on the STM32F0
      *           the reset value does not suit single-byte transfers.
      *           Configure CR2 BEFORE enabling the peripheral. */
-
-	uint32_t cr2 = EE_SPI->CR2;
-	cr2 &= ~(SPI_CR2_DS);                              /* Clear DS[3:0] */
-	cr2 |= (7U << SPI_CR2_DS_Pos);                     /* RM0091 Section 28.7.2: DS = 0111 (8-bit) */
-	cr2 |= SPI_CR2_FRXTH;                              /* FRXTH = 1 (8-bit RXNE threshold) */
-	EE_SPI->CR2 = cr2;
-
-
-	/*By default, FRXTH = 0 triggers RXNE on 16-bit reception.
-	 * If left at default during byte-by-byte SPI transfers,
-	 * the RXNE flag will never set after receiving a single byte, hanging the receive loops.*/
+	    SPI2->CR2 = (7UL << 8) | (1UL << 12);
 
     /* TODO 2.9  SPI_CR1: master mode, your baud-rate divider, the clock
      *           polarity and phase the EEPROM supports (EEPROM datasheet), and
@@ -106,22 +75,10 @@ void eeprom_spi_init(void)
      *           slave-select (NSS) management in master mode: if the
      *           peripheral believes its NSS input is low it will leave master
      *           mode on its own, and you will see no clock at all. */
-
-	uint32_t cr1 = 0U;
-	cr1 |= SPI_CR1_MSTR;                               /* Master configuration */
-	cr1 |= ((EE_SPI_BR & 0x7U) << SPI_CR1_BR_Pos);     /* Baud Rate prescaler */
-	cr1 |= SPI_CR1_SSM | SPI_CR1_SSI;                  /* Software Slave Select management */
-	/* CPOL = 0, CPHA = 0, LSBFRST = 0 (MSB First) */
-
-	EE_SPI->CR1 = cr1;                                 /* RM0091 Section 28.7.1 */
-
-	/*In Master Mode, if hardware slave management is enabled (SSM = 0) and
-	 * the external NSS input line is pulled LOW, the SPI peripheral interprets
-	 * this as another master taking the bus. It clears MSTR mode automatically
-	 * and triggers a Mode Fault (MODF). Setting SSM = 1 (Software Slave Management)
-	 * and SSI = 1 (Internal Slave Select) forces the hardware to perceive $NSS$ as
-	 * internally driven HIGH, preventing mode fault drops.*/
-
+	    SPI2->CR1 = (1UL << 2)          /* MSTR      */
+	              | (1UL << 9)          /* SSM       */
+	              | (1UL << 8)          /* SSI       */
+	              | (EE_SPI_BR << 3);   /* BR[2:0]   */
 
     /* Task 5 fault case. Leave this call exactly here: after your CR1 and CR2
      * configuration, before the peripheral is enabled. It does nothing unless
@@ -129,7 +86,7 @@ void eeprom_spi_init(void)
     task5_fault_hook();
 
     /* TODO 2.10  Enable the peripheral. */
-    EE_SPI->CR1 |= SPI_CR1_SPE;
+    SPI2->CR1 |= (1UL << 6);
 
     dbg_gpiob_moder      = EE_SPI_GPIO->MODER;
     dbg_gpiob_afrh       = EE_SPI_GPIO->AFR[1];
